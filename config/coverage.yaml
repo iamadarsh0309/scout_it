@@ -1,0 +1,36 @@
+version: 1
+source_priority: [fotmob, sofascore]
+
+competitions:
+  - slug: epl
+    country: England
+    tier: 1
+    name: Premier League
+    active: true
+    sources:
+      fotmob: { competition_id: "47" }
+      sofascore: { competition_id: "17" }
+    seasons:
+      - label: "2025-2026"
+        active: true
+        source_season_ids: { fotmob: "23685", sofascore: "61627" }
+
+  - slug: laliga
+    country: Spain
+    tier: 1
+    name: La Liga
+    active: false
+    sources:
+      fotmob: { competition_id: "87" }
+      sofascore: { competition_id: "8" }
+    seasons: []
+
+  - slug: brasileirao
+    country: Brazil
+    tier: 1
+    name: Brasileirao Serie A
+    active: false
+    sources:
+      fotmob: { competition_id: "268" }
+      sofascore: { competition_id: "325" }
+    seasons: []

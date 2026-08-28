@@ -1,0 +1,9 @@
+# Manual overrides for player names that fuzzy matching gets wrong across sources
+# (mononyms, nicknames, transliteration differences). Keys/values are normalized
+# lowercase forms as produced by etl.entity_resolution.name_utils.normalize_name.
+#
+# Example:
+# aliases:
+#   "gabriel jesus": ["gabriel fernando de jesus"]
+
+aliases: {}
