@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from collections.abc import AsyncIterator
+from urllib.parse import quote
 
 from config.settings import CoverageConfig
 from scraper.adapters._json_utils import extract_next_data, find_dicts_with_keys
@@ -81,7 +82,12 @@ class FotMobAdapter(BaseSourceAdapter):
     async def discover_clubs(
         self, competition: DiscoveredCompetition, season: DiscoveredSeason
     ) -> AsyncIterator[DiscoveredClub]:
-        url = f"https://www.fotmob.com/leagues/{competition.source_competition_id}/table/-"
+        # FotMob's "season id" is just its season label string (e.g. "2025/2026") passed as a
+        # ?season= query param — there is no opaque numeric season id, confirmed by inspecting
+        # a live page's __NEXT_DATA__.allAvailableSeasons. Without this param the page silently
+        # falls back to the current season table, which would silently crawl the wrong season.
+        season_qs = quote(season.source_season_id, safe="")
+        url = f"https://www.fotmob.com/leagues/{competition.source_competition_id}/table/-?season={season_qs}"
         fetch = await self._goto_html_with_retry(url, "competition", competition.source_competition_id)
         self.raw_store.write(fetch)
 
@@ -90,16 +96,20 @@ class FotMobAdapter(BaseSourceAdapter):
             raise FetchError(f"__NEXT_DATA__ not found for league page {url} — site layout may have changed")
 
         seen: set[str] = set()
-        for candidate in find_dicts_with_keys(next_data, {"id", "name"}):
+        for candidate in find_dicts_with_keys(next_data, {"id", "name", "pageUrl"}):
+            page_url = candidate.get("pageUrl")
+            # __NEXT_DATA__ contains many unrelated id+name+pageUrl-shaped objects (player
+            # leaderboard rows also carry a "teamColors"/"logo" key, which is why those were
+            # previously used as a discriminator and wrongly matched players too). Only a
+            # "/teams/{id}/..." pageUrl reliably identifies an actual club row — confirmed
+            # against a live Premier League table page (exactly 20 matches, no false positives).
+            if not isinstance(page_url, str) or not page_url.startswith("/teams/"):
+                continue
             club_id = candidate.get("id")
             name = candidate.get("name")
             if club_id is None or not isinstance(name, str):
                 continue
             club_id = str(club_id)
-            # Bias toward team-shaped records: FotMob table rows carry an "id"+"name" for
-            # many unrelated objects too, so require a team-like discriminator.
-            if not any(k in candidate for k in ("pageUrl", "logo", "teamColors")):
-                continue
             if club_id in seen:
                 continue
             seen.add(club_id)
@@ -120,27 +130,43 @@ class FotMobAdapter(BaseSourceAdapter):
         if next_data is None:
             raise FetchError(f"__NEXT_DATA__ not found for squad page {club.url}")
 
+        # A generic id+name+role search (as discover_clubs originally did for teams) picks up
+        # unrelated player-shaped objects elsewhere on the page (e.g. a "similar players" or
+        # team-of-the-week widget) — confirmed live: it pulled in players from other clubs
+        # entirely. The actual roster lives at squad.squad: a list of position-group dicts
+        # (title="coach"/"keepers"/"defenders"/"midfielders"/"attackers", each with "members").
+        squad_containers = find_dicts_with_keys(next_data, {"squad"})
+        groups = None
+        for container in squad_containers:
+            inner = container.get("squad")
+            if isinstance(inner, dict) and isinstance(inner.get("squad"), list):
+                groups = inner["squad"]
+                break
+        if groups is None:
+            raise FetchError(f"squad.squad group list not found for {club.url} — site layout may have changed")
+
         seen: set[str] = set()
-        for candidate in find_dicts_with_keys(next_data, {"id", "name"}):
-            player_id = candidate.get("id")
-            name = candidate.get("name")
-            if player_id is None or not isinstance(name, str):
-                continue
-            if not any(k in candidate for k in ("shirtNumber", "positionId", "role")):
-                continue
-            player_id = str(player_id)
-            if player_id in seen:
-                continue
-            seen.add(player_id)
-            yield DiscoveredPlayer(
-                source=self.source_name,
-                source_player_id=player_id,
-                name=name,
-                source_club_id=club.source_club_id,
-                shirt_number=candidate.get("shirtNumber"),
-                position=candidate.get("role") or candidate.get("positionId"),
-                url=f"https://www.fotmob.com/players/{player_id}/-",
-            )
+        for group in groups:
+            if group.get("title") == "coach":
+                continue  # technical staff, not a player
+            for member in group.get("members", []):
+                player_id = member.get("id")
+                name = member.get("name")
+                if player_id is None or not isinstance(name, str):
+                    continue
+                player_id = str(player_id)
+                if player_id in seen:
+                    continue
+                seen.add(player_id)
+                yield DiscoveredPlayer(
+                    source=self.source_name,
+                    source_player_id=player_id,
+                    name=name,
+                    source_club_id=club.source_club_id,
+                    shirt_number=member.get("shirtNumber"),
+                    position=member.get("positionIdsDesc") or (member.get("role") or {}).get("fallback"),
+                    url=f"https://www.fotmob.com/players/{player_id}/-",
+                )
 
     async def fetch_player_profile(self, player: DiscoveredPlayer) -> RawFetchResult:
         fetch = await self._goto_html_with_retry(player.url, "player", player.source_player_id)

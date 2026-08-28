@@ -13,7 +13,10 @@ competitions:
     seasons:
       - label: "2025-2026"
         active: true
-        source_season_ids: { fotmob: "23685", sofascore: "61627" }
+        # fotmob's "season id" is just its own season label string ("2025/2026"), passed as
+        # a ?season= query param -- confirmed live, there is no opaque numeric id for it.
+        # sofascore's id (61627) is still an unverified placeholder -- confirm before relying on it.
+        source_season_ids: { fotmob: "2025/2026", sofascore: "61627" }
 
   - slug: laliga
     country: Spain
