@@ -1,5 +1,5 @@
 version: 1
-source_priority: [fotmob, sofascore]
+source_priority: [fotmob]
 
 competitions:
   - slug: epl
@@ -9,14 +9,12 @@ competitions:
     active: true
     sources:
       fotmob: { competition_id: "47" }
-      sofascore: { competition_id: "17" }
     seasons:
       - label: "2025-2026"
         active: true
         # fotmob's "season id" is just its own season label string ("2025/2026"), passed as
         # a ?season= query param -- confirmed live, there is no opaque numeric id for it.
-        # sofascore's id (61627) is still an unverified placeholder -- confirm before relying on it.
-        source_season_ids: { fotmob: "2025/2026", sofascore: "61627" }
+        source_season_ids: { fotmob: "2025/2026" }
 
   - slug: laliga
     country: Spain
@@ -25,7 +23,6 @@ competitions:
     active: false
     sources:
       fotmob: { competition_id: "87" }
-      sofascore: { competition_id: "8" }
     seasons: []
 
   - slug: brasileirao
@@ -35,5 +32,4 @@ competitions:
     active: false
     sources:
       fotmob: { competition_id: "268" }
-      sofascore: { competition_id: "325" }
     seasons: []

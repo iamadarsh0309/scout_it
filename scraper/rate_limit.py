@@ -6,8 +6,9 @@ import random
 
 class RateLimiter:
     """Enforces a politeness delay before every navigation, including discovery pages —
-    not just per-player fetches. Sofascore's aggressive fingerprinting needs a much wider
-    window than FotMob's lighter SSR pages (see config/settings.py per-source defaults).
+    not just per-player fetches. Delay windows are configured per source (see
+    config/settings.py per-source defaults) since sources can vary widely in how
+    aggressively they fingerprint/rate-limit automated traffic.
     """
 
     def __init__(self, min_delay_seconds: float, max_delay_seconds: float):

@@ -28,7 +28,7 @@ class BrowserSessionManager:
     """Owns one headless Chromium Browser per process. Callers get a per-source
     BrowserContext (via `context_for`) that is reused across requests within a run —
     fresh contexts per request would shed cookies, which for a fingerprinting-sensitive
-    target like Sofascore looks less like a real user, not more anonymous.
+    target looks less like a real user, not more anonymous.
     """
 
     def __init__(self, concurrency_by_source: dict[str, int], stealth_by_source: dict[str, bool]):

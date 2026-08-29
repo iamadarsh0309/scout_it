@@ -2,9 +2,14 @@
 
 Data collection tool for an AI football scouting platform. This repo currently implements
 **only Pipeline A** of the full platform design — a standalone crawler that discovers
-competitions/clubs/players via browser automation (Playwright) against FotMob and Sofascore,
-and lands normalized player data in PostgreSQL. It does not yet do requirement parsing, ML
-ranking, RAG, or report generation.
+competitions/clubs/players via browser automation (Playwright) against FotMob, and lands
+normalized player data in PostgreSQL. It does not yet do requirement parsing, ML ranking, RAG,
+or report generation.
+
+FotMob is currently the sole data source. The adapter interface and generic per-source
+plumbing (`config/settings.py`'s `sources` mapping, `config/coverage.yaml`'s per-source IDs,
+the `player_source_mapping` table, etc.) remain source-agnostic in case a second source is
+added later, but there is currently nothing else to cross-match against.
 
 See [`ProjectPlan.md`](./ProjectPlan.md) for the full platform vision (Pipelines A–L: data
 extraction, feature engineering, requirement understanding, retrieval, ranking, RAG, scouting
@@ -12,11 +17,10 @@ reports, evaluation, feedback loop). This README covers only what's actually bui
 
 ## What this is, concretely
 
-Neither FotMob nor Sofascore has an official public API. Both expose internal JSON APIs used
-by their own frontends, and this tool drives a real headless browser (Playwright) against the
-actual site — navigating pages and either reading the server-rendered HTML/embedded JSON
-(FotMob) or intercepting the page's own XHR calls (Sofascore) — rather than hitting those
-internal API hosts directly with a bare HTTP client. Raw responses are stored untouched on
+FotMob has no official public API. It exposes an internal JSON API used by its own frontend,
+and this tool drives a real headless browser (Playwright) against the actual site —
+navigating pages and reading the server-rendered HTML/embedded JSON — rather than hitting that
+internal API host directly with a bare HTTP client. Raw responses are stored untouched on
 disk; a separate (not-yet-built) ETL stage will turn them into rows in Postgres.
 
 ## Architecture
@@ -25,7 +29,7 @@ disk; a separate (not-yet-built) ETL stage will turn them into rows in Postgres.
 
 ```mermaid
 flowchart LR
-    A[Data Source<br/>FotMob / Sofascore] --> B[Source Adapter<br/>scraper/adapters/]
+    A[Data Source<br/>FotMob] --> B[Source Adapter<br/>scraper/adapters/]
     B --> C[Raw Data Store<br/>data/raw/ + scrape_ledger]
     C -.not yet built.-> D[Parser<br/>etl/parsers/]
     D -.not yet built.-> E[Validation]
@@ -73,7 +77,7 @@ flowchart TB
         retry[retry.py]
         rawstore[raw_store.py<br/>LocalFileRawStore]
         fingerprint[fingerprint.py<br/>content-hash skip logic]
-        adapters["adapters/fotmob.py<br/>adapters/sofascore.py"]
+        adapters["adapters/fotmob.py"]
     end
 
     subgraph db["db/ (implemented)"]
@@ -108,11 +112,12 @@ flowchart TB
 ## Current implementation status
 
 **Done:**
+
 - `scraper/` package — `BaseSourceAdapter` interface, `BrowserSessionManager` (Playwright
   context lifecycle, per-source concurrency), rate limiting, retry/backoff with block
   detection, filesystem raw storage (`data/raw/{source}/{entity_type}/{id}/{timestamp}.*`),
-  content-hash fingerprinting for skip-if-unchanged, and working `FotMobAdapter` /
-  `SofascoreAdapter` implementations.
+  content-hash fingerprinting for skip-if-unchanged, and a working `FotMobAdapter`
+  implementation.
 - `scraper/cli.py` — the `python -m scraper crawl` orchestrator with staged execution,
   freshness-based skipping, and failed-fetch logging to Postgres.
 - `db/models.py` — the full SQLAlchemy schema: `Country`, `Competition`, `Season`, `Club`,
@@ -124,6 +129,7 @@ flowchart TB
   `name_aliases.yaml` (manual entity-resolution overrides, currently empty).
 
 **Not yet done:**
+
 - `etl/` — `models_raw`, `parsers`, `normalizers`, `entity_resolution`, `load` are all empty
   package skeletons. No parsing of the raw HTML/JSON, no normalization into the canonical
   schema, no entity-resolution scoring/linking logic, no loader that writes into Postgres.
@@ -173,7 +179,9 @@ uv run python -m scraper crawl --source fotmob --competition epl --stage discove
 ```
 
 Flags (see `scraper/cli.py`):
-- `--source` — `fotmob`, `sofascore`, or `all` (runs both sequentially).
+
+- `--source` — `fotmob` or `all` (currently equivalent, since FotMob is the only source
+  implemented).
 - `--competition` — a slug from `config/coverage.yaml` (see below).
 - `--season` — a season label (e.g. `2025-2026`); defaults to whatever season(s) are marked
   `active: true` for that competition.
@@ -188,25 +196,25 @@ Coverage is config-driven: `config/coverage.yaml` maps competition slugs (`epl`,
 `active: true` today; `laliga` and `brasileirao` are present but inactive placeholders —
 flipping `active: true` and filling in season IDs is a config change, not a code change.
 
-Sofascore is deliberately slow (25-32s delay between requests, concurrency 1) due to
-aggressive bot fingerprinting on that site; FotMob is faster (3-6s delay, concurrency 2).
-Expect a full-EPL Sofascore crawl to take hours, not minutes — treat crawls as resumable
+FotMob's rate limit defaults to a 3-6s delay between requests with concurrency 2 (see
+`config/settings.py`). Expect a full-EPL crawl to take a while — treat crawls as resumable
 background jobs, not quick scripts.
 
 ## Legal / risk note
 
-Both FotMob's and Sofascore's Terms of Service explicitly prohibit automated scraping/data
-mining. Neither site offers an official public API for this data. This project accepts that
-risk deliberately, scoped to personal/educational use: low volume (one competition for MVP),
-respecting the rate limits configured per source, and not redistributing raw scraped
-artifacts. This is not a compliance claim — it's an explicit, accepted risk, not a resolved
-one.
+FotMob's Terms of Service explicitly prohibit automated scraping/data mining. It offers no
+official public API for this data. This project accepts that risk deliberately, scoped to
+personal/educational use: low volume (one competition for MVP), respecting the rate limits
+configured per source, and not redistributing raw scraped artifacts. This is not a compliance
+claim — it's an explicit, accepted risk, not a resolved one.
 
 ## What's next
 
 The immediate next milestone is implementing `etl/`: parsing the raw HTML/JSON artifacts
 already being collected in `data/raw/` into typed raw models, validating and normalizing them
-into the canonical schema in `db/models.py`, running entity resolution to link the same
-player across FotMob and Sofascore into `player_source_mapping`, and loading the result into
-Postgres. Until that exists, a crawl only produces raw files and a scrape ledger — no queryable
-player data.
+into the canonical schema in `db/models.py`, and loading the result into Postgres. The
+`player_source_mapping` table and entity-resolution scaffolding (`etl/entity_resolution/`,
+`auto_link_threshold`/`review_queue_threshold` in `config/settings.py`) exist to link the same
+player across multiple sources, but with only FotMob implemented there is currently nothing to
+cross-match — that logic becomes relevant again if a second source is added. Until the ETL
+stage exists, a crawl only produces raw files and a scrape ledger — no queryable player data.

@@ -44,10 +44,6 @@ class Settings(BaseSettings):
                 concurrency=2,
                 rate_limit=RateLimitConfig(min_delay_seconds=3.0, max_delay_seconds=6.0),
             ),
-            "sofascore": SourceConfig(
-                concurrency=1,
-                rate_limit=RateLimitConfig(min_delay_seconds=25.0, max_delay_seconds=32.0),
-            ),
         }
     )
 

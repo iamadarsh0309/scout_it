@@ -10,7 +10,6 @@ from config.settings import CoverageConfig, settings
 from db.models import FailedFetch
 from db.session import get_session
 from scraper.adapters.fotmob import FotMobAdapter
-from scraper.adapters.sofascore import SofascoreAdapter
 from scraper.base import BaseSourceAdapter, DiscoveredCompetition, DiscoveredSeason
 from scraper.browser import BrowserSessionManager
 from scraper.fingerprint import get_ledger_entry, is_fresh, record_fetch
@@ -21,7 +20,7 @@ from scraper.retry import BlockedError, FetchError
 logger = logging.getLogger(__name__)
 
 STAGES = ["discover-clubs", "discover-squads", "fetch-players", "fetch-stats", "all"]
-ADAPTERS = {"fotmob": FotMobAdapter, "sofascore": SofascoreAdapter}
+ADAPTERS = {"fotmob": FotMobAdapter}
 
 
 def _competition_and_season(coverage: CoverageConfig, competition_slug: str, season_label: str | None):
