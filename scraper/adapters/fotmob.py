@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 from collections.abc import AsyncIterator
 from urllib.parse import quote
@@ -70,6 +71,56 @@ class FotMobAdapter(BaseSourceAdapter):
             await self.browser.note_result(self.source_name, failed=failed)
 
     _goto_html_with_retry = with_retry(_goto_html)
+
+    async def _goto_json(self, url: str, entity_type: str, source_entity_id: str) -> RawFetchResult:
+        await self.rate_limiter.wait()
+        page = await self.browser.new_page(self.source_name)
+        failed = False
+        try:
+            resp = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            status = resp.status if resp else None
+            body_text = await resp.text() if resp else ""
+            if looks_blocked(body_text):
+                failed = True
+                raise BlockedError(f"Block page detected for {url}")
+            if status is not None and status >= 400:
+                failed = True
+                raise FetchError(f"HTTP {status} for {url}")
+            payload = json.loads(body_text)
+            return RawFetchResult(
+                source=self.source_name,
+                entity_type=entity_type,
+                source_entity_id=source_entity_id,
+                url=url,
+                http_status=status,
+                fetched_at=dt.datetime.now(dt.UTC),
+                content_type="json",
+                json_payloads=[payload],
+            )
+        except (BlockedError, FetchError):
+            raise
+        except Exception as exc:
+            failed = True
+            raise FetchError(str(exc)) from exc
+        finally:
+            await page.close()
+            await self.browser.note_result(self.source_name, failed=failed)
+
+    _goto_json_with_retry = with_retry(_goto_json)
+
+    @staticmethod
+    def _resolve_entry_id(stat_seasons: list[dict], season: DiscoveredSeason) -> str | None:
+        """FotMob's per-season deep-stats endpoint is keyed by an `entryId` (e.g. "1-0"),
+        not the season label itself. That id is only discoverable from a player's own
+        `statSeasons` index, matched by season label + tournament id."""
+        target_label = season.label.replace("-", "/")  # coverage.yaml "2025-2026" -> fotmob "2025/2026"
+        for season_entry in stat_seasons:
+            if season_entry.get("seasonName") != target_label:
+                continue
+            for tournament in season_entry.get("tournaments", []):
+                if str(tournament.get("tournamentId")) == str(season.source_competition_id):
+                    return tournament.get("entryId")
+        return None
 
     async def discover_competitions(self) -> AsyncIterator[DiscoveredCompetition]:
         for comp in competitions_from_coverage(self.coverage, self.source_name):
@@ -174,9 +225,29 @@ class FotMobAdapter(BaseSourceAdapter):
         return fetch
 
     async def fetch_player_stats(self, player: DiscoveredPlayer, season: DiscoveredSeason) -> RawFetchResult:
-        # FotMob embeds per-season stat breakdowns in the same player page's __NEXT_DATA__
-        # (a season selector hydrates client-side from data already present), so this reuses
-        # the profile page rather than guessing a separate stats URL.
-        fetch = await self._goto_html_with_retry(player.url, "player_stats", player.source_player_id)
+        # The player profile page's embedded __NEXT_DATA__ only carries the *current* season's
+        # summary (mainLeague/firstSeasonStats) and a season->entryId index (statSeasons), not
+        # historical per-season stat values — confirmed live, this was previously a bug where
+        # this method just re-fetched the identical profile page. The real per-season, per-90,
+        # percentile-ranked stats live at a separate JSON endpoint keyed by that entryId.
+        profile_fetch = await self._goto_html_with_retry(player.url, "player", player.source_player_id)
+        next_data = extract_next_data(profile_fetch.html or "")
+        if next_data is None:
+            raise FetchError(f"__NEXT_DATA__ not found for player page {player.url}")
+
+        data = next_data.get("props", {}).get("pageProps", {}).get("data", {})
+        entry_id = self._resolve_entry_id(data.get("statSeasons") or [], season)
+        if entry_id is None:
+            raise FetchError(
+                f"No statSeasons entry for player {player.source_player_id}, "
+                f"tournament {season.source_competition_id}, season {season.label} "
+                f"(player may not have featured in this competition/season)"
+            )
+
+        stats_url = (
+            f"https://www.fotmob.com/api/data/playerStats"
+            f"?playerId={player.source_player_id}&seasonId={entry_id}"
+        )
+        fetch = await self._goto_json_with_retry(stats_url, "player_stats", player.source_player_id)
         self.raw_store.write(fetch)
         return fetch
