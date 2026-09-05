@@ -25,7 +25,14 @@ class SourceConfig(BaseModel):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SCOUT_IT_", env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+psycopg://scout_it:scout_it@localhost:5432/scout_it"
+    database_url: str = "postgresql+psycopg://scout_it:scout_it@localhost:5432/scout_itproj"
+    """Primary DB connection -- local Postgres by default; set SCOUT_IT_DATABASE_URL to a
+    Supabase session-pooler URL to make the cloud DB the default everywhere."""
+
+    supabase_database_url: str | None = None
+    """Optional second target for tools that need to explicitly address the cloud DB
+    regardless of what database_url currently points at (e.g. scripts/data_visualizer.py
+    --target supabase). Set via SCOUT_IT_SUPABASE_DATABASE_URL. Not used by the main app."""
 
     raw_data_dir: Path = DATA_ROOT / "raw"
     normalized_data_dir: Path = DATA_ROOT / "normalized"

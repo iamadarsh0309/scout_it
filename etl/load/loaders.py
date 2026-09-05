@@ -71,6 +71,19 @@ def get_or_create_season(session: Session, competition: Competition, label: str)
     return season
 
 
+def find_club_by_name(session: Session, name: str | None) -> Club | None:
+    """Lookup-only, no create -- used for incidental club references (e.g. a player's
+    market-value history mentions clubs across their whole career, including youth teams,
+    loan spells, and foreign clubs entirely outside this project's tracked scope). Creating
+    a Club row for every such name would pollute the table meant to represent only the
+    competitions/clubs coverage.yaml actually tracks (confirmed live: naively calling
+    get_or_create_club_by_name from market-value normalization inflated Club from 20 rows
+    to 613 across a real 572-player run)."""
+    if not name:
+        return None
+    return session.scalar(select(Club).where(Club.name == name))
+
+
 def get_or_create_club_by_name(session: Session, name: str, country: Country | None = None) -> Club:
     """Club has no source_id mapping yet (unlike Player, which has player_source_mapping) --
     single-source FotMob keys it by name for now. Revisit with a proper club_source_mapping
@@ -159,7 +172,7 @@ def upsert_market_values(session: Session, player: Player, source: str, points: 
     for point in points:
         point = dict(point)
         club_name = point.pop("club_source_name", None)
-        club = get_or_create_club_by_name(session, club_name) if club_name else None
+        club = find_club_by_name(session, club_name)
 
         row = session.scalar(
             select(PlayerMarketValue).where(
